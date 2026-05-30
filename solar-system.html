@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>太陽系軌道動畫</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; cursor: crosshair; }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    padding: 10px 14px;
+    background: rgba(8, 14, 30, 0.85);
+    border: 1px solid rgba(80, 180, 255, 0.6);
+    border-radius: 8px;
+    color: #cfe9ff;
+    font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 0 20px rgba(60, 150, 255, 0.4);
+    opacity: 0;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+    z-index: 10;
+  }
+  #tooltip .name { font-size: 15px; font-weight: 600; color: #ffffff; letter-spacing: 1px; }
+  #tooltip .row { color: #8fc4ff; }
+  #tooltip .val { color: #ffe28a; }
+  #tooltip .pin { font-size: 12px; }
+  #tooltip .hint { margin-top: 4px; font-size: 11px; color: #6f9fd0; }
+
+  #ui {
+    position: fixed;
+    top: 18px; left: 18px;
+    font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+    color: #7fb6ff;
+    z-index: 10;
+    user-select: none;
+  }
+  #ui h1 {
+    font-size: 18px; font-weight: 300; letter-spacing: 4px;
+    text-shadow: 0 0 12px rgba(80,160,255,0.8);
+    margin-bottom: 10px;
+  }
+  .ctrl { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 6px; }
+  .ctrl button {
+    background: rgba(20,40,80,0.6);
+    border: 1px solid rgba(90,170,255,0.5);
+    color: #bfe0ff; border-radius: 5px;
+    padding: 4px 12px; cursor: pointer; font-size: 12px;
+    transition: all .2s;
+  }
+  .ctrl button:hover { background: rgba(50,110,200,0.7); box-shadow: 0 0 10px rgba(80,160,255,0.6); }
+  #speedVal { color: #ffe28a; min-width: 38px; }
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div id="tooltip"></div>
+<div id="ui">
+  <h1>太 陽 系 · SOLAR SYSTEM</h1>
+  <div class="ctrl">
+    <span>速度</span>
+    <button id="slow">−</button>
+    <span id="speedVal">1.0×</span>
+    <button id="fast">+</button>
+    <button id="pause">暫停</button>
+    <button id="orbitToggle">軌道線</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('sky');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+
+let W, H, cx, cy;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W / 2; cy = H / 2;
+}
+window.addEventListener('resize', () => { resize(); buildStars(); });
+resize();
+
+/* ---------- 星空背景 ---------- */
+let stars = [];
+function buildStars() {
+  stars = [];
+  const count = Math.floor((W * H) / 1400);
+  for (let i = 0; i < count; i++) {
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.3 + 0.2,
+      base: Math.random() * 0.5 + 0.3,
+      tw: Math.random() * Math.PI * 2,
+      twSpeed: Math.random() * 0.04 + 0.01
+    });
+  }
+}
+buildStars();
+
+/* 遠處星雲斑塊 */
+const nebulae = [
+  { x: 0.25, y: 0.3, r: 380, c: 'rgba(70, 30, 120, 0.18)' },
+  { x: 0.78, y: 0.65, r: 460, c: 'rgba(20, 70, 130, 0.16)' },
+  { x: 0.6, y: 0.15, r: 300, c: 'rgba(120, 40, 90, 0.12)' }
+];
+
+/* ---------- 行星資料 ----------
+   軌道半徑與週期用「真實相對比例」再做視覺壓縮，
+   避免外行星跑出畫面但保持相對關係。
+   period 為真實公轉週期（地球日）。
+*/
+const planetData = [
+  { name: '水星 Mercury', color: '#b7a89a', glow:'#d8c4a8', radius: 3.2,  a: 0.39,  period: 88,      ring:false },
+  { name: '金星 Venus',   color: '#e8c07a', glow:'#ffe0a0', radius: 5.0,  a: 0.72,  period: 225,     ring:false },
+  { name: '地球 Earth',   color: '#4a90d9', glow:'#7fd0ff', radius: 5.3,  a: 1.00,  period: 365,     ring:false },
+  { name: '火星 Mars',    color: '#d65a3a', glow:'#ff8a5a', radius: 4.0,  a: 1.52,  period: 687,     ring:false },
+  { name: '木星 Jupiter', color: '#d9a86a', glow:'#ffd49a', radius: 13,   a: 5.20,  period: 4333,    ring:false },
+  { name: '土星 Saturn',  color: '#e6cf94', glow:'#fff0c0', radius: 11,   a: 9.58,  period: 10759,   ring:true  },
+  { name: '天王星 Uranus',color: '#8fd9d9', glow:'#bdfdfd', radius: 8,    a: 19.2,  period: 30687,   ring:true  },
+  { name: '海王星 Neptune',color:'#4a6ed9', glow:'#7fa0ff', radius: 7.8,  a: 30.1,  period: 60190,   ring:false }
+];
+
+/* 將天文單位(AU)用 sqrt 壓縮映射到螢幕半徑，外圈才不會太擠/太遠 */
+function computeLayout() {
+  const maxA = planetData[planetData.length - 1].a;
+  const minDim = Math.min(W, H);
+  const inner = 60;                       // 太陽外的起始半徑
+  const outer = minDim / 2 - 50;          // 最外軌道半徑
+  planetData.forEach(p => {
+    const t = Math.sqrt(p.a) / Math.sqrt(maxA);
+    p.orbitR = inner + t * (outer - inner);
+    p.angle = Math.random() * Math.PI * 2;
+    // 角速度：真實週期的相對比例（週期越長轉越慢）。以地球為基準。
+    p.angSpeed = (365 / p.period) * 0.012;
+  });
+}
+computeLayout();
+window.addEventListener('resize', computeLayout);
+
+/* ---------- 月球（繞地球公轉） ---------- */
+const earth = planetData.find(p => p.name.includes('Earth'));
+const moon = {
+  name: '月球 Moon',
+  color: '#cfcfcf', glow: '#f2f2f2',
+  radius: Math.max(1.4, earth.radius * 0.27), // 真實半徑比：月球 ≈ 0.27 倍地球
+  a: 0.00257,                                 // 真實距離 ≈ 0.00257 AU（38.4 萬公里）
+  period: 27.3,                               // 真實恆星公轉週期 27.3 天
+  orbitR: earth.radius + 14,                  // 視覺壓縮的繞地距離
+  angle: Math.random() * Math.PI * 2,
+  // 繞地角速度：以真實週期比 (365 / 27.3 ≈ 13.4) 相對地球公轉加速
+  angSpeed: (365 / 27.3) * 0.012
+};
+const interactive = [...planetData, moon];   // 可懸停/點擊的天體
+
+/* 週期人類可讀格式 */
+function periodText(days) {
+  if (days < 365) return days + ' 天';
+  const years = days / 365.25;
+  return years.toFixed(years < 10 ? 1 : 0) + ' 年';
+}
+
+/* ---------- 控制 ---------- */
+let speed = 1.0, paused = false, showOrbits = true;
+document.getElementById('slow').onclick = () => { speed = Math.max(0.1, speed - 0.25); updSpeed(); };
+document.getElementById('fast').onclick = () => { speed = Math.min(8, speed + 0.25); updSpeed(); };
+document.getElementById('pause').onclick = (e) => { paused = !paused; e.target.textContent = paused ? '播放' : '暫停'; };
+document.getElementById('orbitToggle').onclick = () => { showOrbits = !showOrbits; };
+function updSpeed(){ document.getElementById('speedVal').textContent = speed.toFixed(1)+'×'; }
+
+/* ---------- 滑鼠懸停偵測 ---------- */
+let mouse = { x: -1, y: -1 };
+let hovered = null;
+let selected = null;   // 被釘選持續顯示的行星
+canvas.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mouseleave', () => { mouse.x = mouse.y = -1; });
+
+// 點擊釘選：點同一顆→關閉；點另一顆→切換；點空白→維持
+canvas.addEventListener('click', e => {
+  let hit = null;
+  for (const p of interactive) {
+    const dx = e.clientX - p._x, dy = e.clientY - p._y;
+    if (dx*dx + dy*dy <= (p.radius + 6) * (p.radius + 6)) { hit = p; break; }
+  }
+  if (hit) selected = (selected === hit) ? null : hit;
+});
+
+/* ---------- 太陽脈動 ---------- */
+let sunPulse = 0;
+
+/* ---------- 主迴圈 ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(50, now - last); last = now;
+  draw(dt);
+  requestAnimationFrame(frame);
+}
+
+function draw(dt) {
+  // 背景
+  ctx.fillStyle = '#02040a';
+  ctx.fillRect(0, 0, W, H);
+
+  // 星雲
+  nebulae.forEach(n => {
+    const g = ctx.createRadialGradient(n.x*W, n.y*H, 0, n.x*W, n.y*H, n.r);
+    g.addColorStop(0, n.c);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  });
+
+  // 星星閃爍
+  for (const s of stars) {
+    s.tw += s.twSpeed;
+    const a = s.base + Math.sin(s.tw) * 0.3;
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 軌道線
+  if (showOrbits) {
+    planetData.forEach(p => {
+      const hi = (hovered === p || selected === p);
+      ctx.strokeStyle = hi ? 'rgba(120,200,255,0.55)' : 'rgba(90,140,220,0.13)';
+      ctx.lineWidth = hi ? 1.6 : 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, p.orbitR, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+  }
+
+  // 太陽
+  sunPulse += 0.03;
+  const sunR = 26 + Math.sin(sunPulse) * 1.5;
+  const corona = ctx.createRadialGradient(cx, cy, 0, cx, cy, sunR * 4);
+  corona.addColorStop(0, 'rgba(255, 230, 150, 0.9)');
+  corona.addColorStop(0.2, 'rgba(255, 180, 60, 0.45)');
+  corona.addColorStop(0.5, 'rgba(255, 120, 30, 0.18)');
+  corona.addColorStop(1, 'rgba(255, 90, 20, 0)');
+  ctx.fillStyle = corona;
+  ctx.beginPath(); ctx.arc(cx, cy, sunR * 4, 0, Math.PI * 2); ctx.fill();
+
+  const core = ctx.createRadialGradient(cx - sunR*0.3, cy - sunR*0.3, sunR*0.2, cx, cy, sunR);
+  core.addColorStop(0, '#fff8e0');
+  core.addColorStop(0.6, '#ffd24a');
+  core.addColorStop(1, '#ff8c1a');
+  ctx.fillStyle = core;
+  ctx.beginPath(); ctx.arc(cx, cy, sunR, 0, Math.PI * 2); ctx.fill();
+
+  // 行星
+  hovered = null;
+  const mvalid = mouse.x >= 0;
+
+  planetData.forEach(p => {
+    if (!paused) p.angle += p.angSpeed * speed * (dt / 16.7);
+    const x = cx + Math.cos(p.angle) * p.orbitR;
+    const y = cy + Math.sin(p.angle) * p.orbitR;
+    p._x = x; p._y = y;
+
+    // 命中測試
+    if (mvalid) {
+      const dx = mouse.x - x, dy = mouse.y - y;
+      if (dx*dx + dy*dy <= (p.radius + 6) * (p.radius + 6)) hovered = p;
+    }
+  });
+
+  // 月球位置（以地球為中心公轉）
+  if (!paused) moon.angle += moon.angSpeed * speed * (dt / 16.7);
+  moon._x = earth._x + Math.cos(moon.angle) * moon.orbitR;
+  moon._y = earth._y + Math.sin(moon.angle) * moon.orbitR;
+  if (mvalid) {
+    const dx = mouse.x - moon._x, dy = mouse.y - moon._y;
+    if (dx*dx + dy*dy <= (moon.radius + 6) * (moon.radius + 6)) hovered = moon; // 月球優先
+  }
+
+  planetData.forEach(p => {
+    const x = p._x, y = p._y;
+    const isHover = hovered === p;
+    const isSel = selected === p;
+    const active = isHover || isSel;
+
+    // 光暈
+    const glowR = p.radius * (active ? 4 : 2.6);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+    g.addColorStop(0, p.glow);
+    g.addColorStop(0.3, p.color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = active ? 0.55 : 0.3;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // 土星 / 天王星 環
+    if (p.ring) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-0.5);
+      ctx.scale(1, 0.35);
+      ctx.strokeStyle = 'rgba(230,210,160,0.7)';
+      ctx.lineWidth = p.radius * 0.5;
+      ctx.beginPath(); ctx.arc(0, 0, p.radius * 1.9, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
+    // 行星本體（帶立體高光）
+    const body = ctx.createRadialGradient(
+      x - p.radius*0.35, y - p.radius*0.35, p.radius*0.1,
+      x, y, p.radius
+    );
+    body.addColorStop(0, p.glow);
+    body.addColorStop(0.5, p.color);
+    body.addColorStop(1, shade(p.color, -0.45));
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.arc(x, y, p.radius, 0, Math.PI * 2); ctx.fill();
+
+    if (active) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, p.radius + 3, 0, Math.PI * 2); ctx.stroke();
+    }
+    // 被釘選時加一圈虛線指示環
+    if (isSel) {
+      ctx.strokeStyle = 'rgba(120,200,255,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(x, y, p.radius + 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  });
+
+  // ---- 繪製月球及其繞地軌道 ----
+  {
+    const ex = earth._x, ey = earth._y;
+    const isHover = hovered === moon, isSel = selected === moon, active = isHover || isSel;
+
+    if (showOrbits) {
+      const hi = active;
+      ctx.strokeStyle = hi ? 'rgba(210,215,235,0.5)' : 'rgba(180,190,210,0.16)';
+      ctx.lineWidth = hi ? 1.4 : 1;
+      ctx.beginPath(); ctx.arc(ex, ey, moon.orbitR, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    const x = moon._x, y = moon._y;
+
+    // 光暈
+    const glowR = moon.radius * (active ? 4 : 2.6);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+    g.addColorStop(0, moon.glow);
+    g.addColorStop(0.3, moon.color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = active ? 0.55 : 0.3;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, glowR, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // 本體（帶坑窪般的明暗）
+    const body = ctx.createRadialGradient(
+      x - moon.radius*0.35, y - moon.radius*0.35, moon.radius*0.1, x, y, moon.radius);
+    body.addColorStop(0, moon.glow);
+    body.addColorStop(0.5, moon.color);
+    body.addColorStop(1, shade(moon.color, -0.45));
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.arc(x, y, moon.radius, 0, Math.PI * 2); ctx.fill();
+
+    if (active) {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, moon.radius + 3, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (isSel) {
+      ctx.strokeStyle = 'rgba(120,200,255,0.9)'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(x, y, moon.radius + 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Tooltip：懸停優先，否則顯示被釘選的行星
+  const info = hovered || selected;
+  if (info) {
+    const pinned = (info === selected) && (info !== hovered);
+    tooltip.style.opacity = '1';
+    tooltip.innerHTML =
+      `<div class="name">${info.name}${pinned ? ' <span class="pin">📌</span>' : ''}</div>` +
+      `<div class="row">公轉週期：<span class="val">${periodText(info.period)}</span></div>` +
+      `<div class="row">軌道半徑：<span class="val">${info.a} AU</span></div>` +
+      (pinned ? `<div class="hint">點擊該行星可關閉</div>` : '');
+    let tx = info._x + 18, ty = info._y + 18;
+    const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+    if (tx + tw > W) tx = info._x - tw - 18;
+    if (ty + th > H) ty = info._y - th - 18;
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+  } else {
+    tooltip.style.opacity = '0';
+  }
+  canvas.style.cursor = hovered ? 'pointer' : 'crosshair';
+}
+
+/* 顏色加深/變亮工具 */
+function shade(hex, amt) {
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  let r = parseInt(c.slice(0,2),16), g = parseInt(c.slice(2,4),16), b = parseInt(c.slice(4,6),16);
+  r = Math.round(Math.min(255, Math.max(0, r + 255*amt)));
+  g = Math.round(Math.min(255, Math.max(0, g + 255*amt)));
+  b = Math.round(Math.min(255, Math.max(0, b + 255*amt)));
+  return `rgb(${r},${g},${b})`;
+}
+
+updSpeed();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
