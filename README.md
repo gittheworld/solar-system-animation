@@ -2,6 +2,10 @@
 
 使用 **HTML + Canvas** 製作的科幻風格太陽系互動動畫。八大行星依真實比例與公轉週期繞日運行，地球並帶有依真實比例運轉的月球。
 
+### 🔭 線上體驗（點擊即用）
+
+**<https://gittheworld.github.io/solar-system-animation/>**
+
 ![preview](preview.png)
 
 ## ✨ 特色
